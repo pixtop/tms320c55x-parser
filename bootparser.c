@@ -27,10 +27,12 @@ int main(int argc, char *argv[]) {
 		printf("Could not open %s\n", argv[1]);
 		exit(1);
 	}
-	struct boot_table btable;
+	struct boot_table btable = {.l_section = NULL};
 	uint8_t buf[4];
+	//Read entry point
 	fread(buf, 1, sizeof buf, fp);
 	btable.entry_point = be32_to_cpu(buf);
+	//Read Register configuration
 	fread(buf, 1, sizeof buf, fp);
 	btable.register_count = be32_to_cpu(buf);
 	int i;
@@ -42,6 +44,7 @@ int main(int argc, char *argv[]) {
 			btable.register_conf[i].val=be16_to_cpu(buf+2);
 		}
 	}
+	//Print Boot table headers
 	UNDERLINE;
 	printf("Boot Table TMS320c55x\n");
 	UNDERLINE;
@@ -53,7 +56,7 @@ int main(int argc, char *argv[]) {
 		printf("register address: 0x%x, value: 0x%x\n", btable.register_conf[i].addr, btable.register_conf[i].val);
 		UNDERLINE;
 	}
-	btable.l_section = NULL;
+	//Looking for sections
 	while(1) {
 		struct section *psec = (struct section *)malloc(sizeof(struct section));
 		fread(buf, 1, sizeof buf, fp);
