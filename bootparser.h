@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define be16_to_cpu(buf) ((uint16_t)*(buf+1) | (uint16_t)*(buf) << 8)
 #define be32_to_cpu(buf) ((uint32_t)be16_to_cpu(buf+2) | (uint32_t)be16_to_cpu(buf) << 16)
@@ -13,14 +14,18 @@ typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
 
+enum E_section { TEXT, VECTORS, CINIT };
+
 struct reg_conf {
         uint16_t addr;
         uint16_t val;
 };
 
 struct section {
+	char name[128];
         uint32_t size;
-        uint32_t addr;
+        uint32_t paddr;
+	uint32_t offset;
         struct section *next;
 };
 
