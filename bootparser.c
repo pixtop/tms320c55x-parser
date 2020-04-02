@@ -1,6 +1,8 @@
 #include "bootparser.h"
 
-struct boot_table btable = {.l_section = NULL};
+struct boot_table btable;
+struct section *sections;
+struct reg_conf *registers;
 FILE *fp;
 uint32_t cinit_paddr;
 
@@ -21,8 +23,13 @@ char *mem_map(uint32_t addr) {
 		return "Unkown mapping";
 }
 
+struct section *last_item(struct section *sec) {
+	while(sec->next != NULL) sec = sec->next;
+	return sec;
+}
+
 uint32_t shift(uint32_t p_addr) {
-	struct section *psec = btable.l_section;
+	struct section *psec = sections;
 	while (psec != NULL) {
 		if (p_addr >= psec->paddr && p_addr < psec->paddr+psec->size) {
 			return psec->paddr - psec->offset;
@@ -33,23 +40,26 @@ uint32_t shift(uint32_t p_addr) {
 }
 
 void cinit_finder(struct section s) {
-	uint8_t buf[4];
+	uint8_t opcode;
 	uint32_t fp_offset = ftell(fp);
 	uint32_t boot_addr = btable.entry_point - shift(btable.entry_point);
+	// Diving into boot.asm
 	fseek(fp, boot_addr, SEEK_SET);
+	uint32_t addr = 0;
 	while (1) {
-		fread(buf, 1, 1, fp);
-		if (buf[0] == 0x86) {
-			fread(buf, 1, 4, fp);
-			buf[0] = 0;
-			fseek(fp, be32_to_cpu(buf) - shift(be32_to_cpu(buf)) /* @autoinit */, SEEK_SET);
+		fread(&opcode, 1, 1, fp);
+		if (opcode == 0x86) {
+			// Diving into autoinit.asm
+			fread(&addr, 4, 1, fp);
+			addr = (addr & 0xFFFFFF00); //remove opcode;
+			fseek(fp, (__bswap_32(addr)) - shift(__bswap_32(addr)) /* @autoinit */, SEEK_SET);
 			while (1) {
-				fread(buf, 1, 1, fp);
-				if (buf[0] == 0xec /* amar opcode */) {
-					fread(buf, 1, 2, fp);
-					fread(&buf[1], 1, 3, fp);
-					buf[0] = 0;
-					cinit_paddr = be32_to_cpu(buf)*2; //word addr
+				fread(&opcode, 1, 1, fp);
+				if (opcode == 0xec /* amar opcode */) {
+					fseek(fp, 2, SEEK_CUR);
+					fread(&addr, 3, 1, fp);
+					addr = addr << 8;
+					cinit_paddr = __bswap_32(addr)*2; //word addr
 					fseek(fp, fp_offset, SEEK_SET);
 					return;
 				}
@@ -60,8 +70,6 @@ void cinit_finder(struct section s) {
 
 int sname_props(struct section s, enum E_section e) {
 	int status = 0;
-	//uint8_t buf[2];
-	//uint32_t saved_fp = ftell(fp);
 	switch(e) {
 		case TEXT:
 			//entry point is located inside .text section
@@ -69,10 +77,10 @@ int sname_props(struct section s, enum E_section e) {
 			break;
 		case VECTORS:
 			//IVT have a 0x100 size and is aligned
-			status = s.size == 0x100 && (s.paddr & 0xFF) == 0 ? 1:0;
+			status = (s.size == 0x100 && (s.paddr & 0xFF) == 0) ? 1:0;
 			break;
 		case CINIT:
-			status = s.paddr == cinit_paddr ? 1:0;
+			status = (s.paddr == cinit_paddr) ? 1:0;
 			break;
 		default:
 			break;
@@ -100,20 +108,19 @@ int main(int argc, char *argv[]) {
 		printf("Could not open %s\n", argv[1]);
 		exit(1);
 	}
-	uint8_t buf[4];
+	fread(&btable, BOOT_TABLE, 1, fp);
 	//Read entry point
-	fread(buf, 1, sizeof buf, fp);
-	btable.entry_point = be32_to_cpu(buf);
+	btable.entry_point = __bswap_32(btable.entry_point);
+	printf("0x%x\n", btable.entry_point);
 	//Read Register configuration
-	fread(buf, 1, sizeof buf, fp);
-	btable.register_count = be32_to_cpu(buf);
+	btable.register_count = __bswap_32(btable.register_count);
 	int i;
 	if (btable.register_count > 0) {
-		btable.register_conf = (struct reg_conf *)malloc(sizeof(struct reg_conf)*btable.register_count);
+		registers = (struct reg_conf *)malloc(REG_CONF*btable.register_count);
 		for(i=0; i<btable.register_count; i++) {
-			fread(buf, 1, sizeof buf, fp);
-			btable.register_conf[i].addr=be16_to_cpu(buf);
-			btable.register_conf[i].val=be16_to_cpu(buf+2);
+			fread(&registers[i], REG_CONF, 1, fp);
+			registers[i].addr = __bswap_16(registers[i].addr);
+			registers[i].val = __bswap_16(registers[i].val);
 		}
 	}
 	//Print Boot table headers
@@ -125,7 +132,7 @@ int main(int argc, char *argv[]) {
 	printf("register count: %u\n", btable.register_count);
 	UNDERLINE;
 	for(i=0; i<btable.register_count; i++) {
-		printf("register address: 0x%x, value: 0x%x\n", btable.register_conf[i].addr, btable.register_conf[i].val);
+		printf("register address: 0x%x, value: 0x%x\n", registers[i].addr, registers[i].val);
 		UNDERLINE;
 	}
 	//Looking for sections
@@ -133,25 +140,26 @@ int main(int argc, char *argv[]) {
 	while(1) {
 		psec = (struct section *)malloc(sizeof(struct section));
 		memset(psec, 0, sizeof(struct section));
-		fread(buf, 1, sizeof buf, fp);
-		psec->size = be32_to_cpu(buf);
+		fread(psec, 8, 1, fp);
+		psec->size = __bswap_32(psec->size);
 		if (psec->size == 0) {
 			free(psec);
 			break;
 		}
-		fread(buf, 1, sizeof buf, fp);
-		psec->paddr = be32_to_cpu(buf);
+		psec->paddr = __bswap_32(psec->paddr);
 		psec->offset = ftell(fp);
-		if (btable.l_section != NULL)
-			last_item(btable.l_section)->next = psec;
+
+		if (sections != NULL)
+			last_item(sections)->next = psec;
 		else
-			btable.l_section = psec;
+			sections = psec;
+
 		if ((ftell(fp)+psec->size)%2 != 0)
 			fseek(fp, psec->size+1, SEEK_CUR);
 		else
 			fseek(fp, psec->size, SEEK_CUR);
 	}
-	psec = btable.l_section;
+	psec = sections;
 	//Finding section name then print
 	while(psec != NULL) {
 		sname_finder(psec);

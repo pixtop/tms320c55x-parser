@@ -4,9 +4,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <byteswap.h>
 
-#define be16_to_cpu(buf) ((uint16_t)*(buf+1) | (uint16_t)*(buf) << 8)
-#define be32_to_cpu(buf) ((uint32_t)be16_to_cpu(buf+2) | (uint32_t)be16_to_cpu(buf) << 16)
+#define BOOT_TABLE 8
+#define REG_CONF 4
 
 #define UNDERLINE printf("-------------------------\n")
 
@@ -17,29 +18,21 @@ typedef unsigned int uint32_t;
 enum E_section { TEXT, VECTORS, CINIT };
 
 struct reg_conf {
-        uint16_t addr;
-        uint16_t val;
-};
+  uint16_t addr;
+  uint16_t val;
+} __attribute__((packed));;
 
 struct section {
-	char name[128];
-        uint32_t size;
-        uint32_t paddr;
+  uint32_t size;
+  uint32_t paddr;
 	uint32_t offset;
-        struct section *next;
-};
-
-struct section *last_item(struct section *sec) {
-        while(sec->next != NULL)
-                sec = sec->next;
-        return sec;
-}
+  char name[128];
+  struct section *next;
+} __attribute__((packed));;
 
 struct boot_table {
-        uint32_t entry_point;
-        uint32_t register_count;
-        struct reg_conf *register_conf;
-        struct section *l_section;
-};
+  uint32_t entry_point;
+  uint32_t register_count;
+} __attribute__((packed));
 
 #endif
