@@ -1,13 +1,17 @@
 CC=gcc
 CFLAGS=-Wall
-DEPS=bootparser.h
-OBJ=bootparser.o
+DEPS=bootparser.h coffparser.h
 
-%.o: %.c $(DEPS)
-	$(CC) -c -o $@ $< $(CFLAGS)
+all: bootparser coffparser
 
 bootparser: bootparser.o
 	$(CC) -o $@ $^ $(CFLAGS)
 
-clean: 
-	rm bootparser bootparser.o
+coffparser: coffparser.o
+	$(CC) -o $@ $^ $(CFLAGS)
+
+%.o: %.c $(DEPS)
+	$(CC) -c -o $@ $< $(CFLAGS)
+
+clean:
+	rm bootparser coffparser *.o
