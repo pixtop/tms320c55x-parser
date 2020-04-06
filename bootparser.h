@@ -9,13 +9,11 @@
 #define BOOT_TABLE 8
 #define REG_CONF 4
 
-#define UNDERLINE printf("-------------------------\n")
-
 typedef unsigned char uint8_t;
 typedef unsigned short uint16_t;
 typedef unsigned int uint32_t;
 
-enum E_section { TEXT, VECTORS, CINIT };
+enum E_section { TEXT, VECTORS, CINIT, DATA };
 
 struct reg_conf {
   uint16_t addr;

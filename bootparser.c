@@ -3,6 +3,7 @@
 struct boot_table btable;
 struct section *sections;
 struct reg_conf *registers;
+
 FILE *fp;
 uint32_t cinit_paddr;
 
@@ -16,7 +17,7 @@ char *mem_map(uint32_t addr) {
 	else if (addr >= 0x40000 && addr < 0xFF0000)
 		return "External";
 	else if (addr >= 0xFF0000 && addr < 0xFFC000)
-	       return "ROM|External";
+	  return "ROM|External";
 	else if (addr >= 0xFFC000 && addr < 0xFFFFFF)
 		return "External";
 	else
@@ -52,7 +53,7 @@ void cinit_finder(struct section s) {
 			// Diving into autoinit.asm
 			fread(&addr, 4, 1, fp);
 			addr = (addr & 0xFFFFFF00); //remove opcode;
-			fseek(fp, (__bswap_32(addr)) - shift(__bswap_32(addr)) /* @autoinit */, SEEK_SET);
+			fseek(fp, (__bswap_32(addr)) - shift(__bswap_32(addr)) /*@autoinit*/, SEEK_SET);
 			while (1) {
 				fread(&opcode, 1, 1, fp);
 				if (opcode == 0xec /* amar opcode */) {
@@ -68,12 +69,32 @@ void cinit_finder(struct section s) {
 	}
 }
 
+uint8_t data_finder(struct section s) {
+	uint8_t wbuf[2];
+	uint8_t is_data = 1;
+	uint32_t fp_offset = ftell(fp);
+	uint32_t i, word = 0;
+	fseek(fp, s.offset, SEEK_SET);
+	for (i=0; i<s.size/2; i++) {
+		fread(wbuf, 1, 2, fp);
+		if (wbuf[0] != 0) {
+			word++;
+		}
+	}
+	if (word > s.size/4) {
+		is_data = 0;
+	}
+	fseek(fp, fp_offset, SEEK_SET);
+	return is_data;
+}
+
 int sname_props(struct section s, enum E_section e) {
 	int status = 0;
 	switch(e) {
 		case TEXT:
 			//entry point is located inside .text section
-			status = btable.entry_point > s.paddr && btable.entry_point < s.paddr+s.size ? 1:0;
+			status = btable.entry_point > s.paddr
+				&& btable.entry_point < s.paddr+s.size ? 1:0;
 			break;
 		case VECTORS:
 			//IVT have a 0x100 size and is aligned
@@ -82,26 +103,67 @@ int sname_props(struct section s, enum E_section e) {
 		case CINIT:
 			status = (s.paddr == cinit_paddr) ? 1:0;
 			break;
+		case DATA:
+			//data space is word addressable
+			status = data_finder(s);
 		default:
 			break;
 	}
 	return status;
 }
 
-void sname_finder(struct section *psec) {
-	if (sname_props(*psec, TEXT)) {
-		cinit_finder(*psec);
-		strcpy(psec->name, ".text");
-	} else if (sname_props(*psec, VECTORS)) {
-		strcpy(psec->name, ".vectors");
-	} else if (sname_props(*psec, CINIT)) {
-		strcpy(psec->name, ".cinit");
+void sname_finder() {
+	struct section *psec = sections;
+	while(psec != NULL) {
+		if (sname_props(*psec, TEXT)) {
+			cinit_finder(*psec);
+			strcpy(psec->name, ".text");
+		} else if (sname_props(*psec, VECTORS)) {
+			strcpy(psec->name, "vectors");
+		} else if (sname_props(*psec, CINIT)) {
+			strcpy(psec->name, ".cinit");
+		} else if (sname_props(*psec, DATA)) {
+			strcpy(psec->name, ".data");
+		}
+		psec = psec->next;
 	}
+}
+
+void show_usage(char prog[]) {
+	printf("usage: %s [file]\n", prog);
+}
+
+void show_info() {
+	uint32_t i;
+	//Print Boot table headers
+	printf("TMS320c55x Binary HEX struct\n");
+	printf("----------------------------");
+	printf("\n> Entry point | format @:(file_offset)phy_addr\n");
+	printf("  @:(0x%06x)0x%06x\n",
+		btable.entry_point-shift(btable.entry_point), btable.entry_point);
+	printf("\n> Register count: %u | format (@, value)\n",
+		btable.register_count);
+	for(i=0; i<btable.register_count; i++) {
+		printf("  (0x%04x, 0x%04x)", registers[i].addr, registers[i].val);
+		if((i+1)%4 == 0) printf("\n");
+	}
+	//Print sections
+	printf("\n> Sections | format [name] @:(file_offset) [phy_start - phy_end](size)(base), (memory)\n");
+	struct section *psec = sections;
+	while(psec != NULL) {
+		if (strlen(psec->name) == 0) printf("  []\t\t");
+		else printf("  [%s]\t", psec->name);
+		printf("@:(0x%06x)[0x%06x - 0x%06x](0x%02x)(0x%03x),\t(%s)\n",
+			psec->offset, psec->paddr, psec->paddr+psec->size-1,
+			psec->size, (psec->paddr-psec->offset), mem_map(psec->paddr));
+		psec = psec->next;
+	}
+	printf("\n");
 }
 
 int main(int argc, char *argv[]) {
 	if (argc < 2) {
-		printf("usage: bootloader [file]\n");
+		show_usage(argv[0]);
 		exit(1);
 	}
 	if ((fp = fopen(argv[1], "r")) == NULL) {
@@ -111,29 +173,16 @@ int main(int argc, char *argv[]) {
 	fread(&btable, BOOT_TABLE, 1, fp);
 	//Read entry point
 	btable.entry_point = __bswap_32(btable.entry_point);
-	printf("0x%x\n", btable.entry_point);
 	//Read Register configuration
 	btable.register_count = __bswap_32(btable.register_count);
-	int i;
 	if (btable.register_count > 0) {
+		uint32_t i;
 		registers = (struct reg_conf *)malloc(REG_CONF*btable.register_count);
 		for(i=0; i<btable.register_count; i++) {
 			fread(&registers[i], REG_CONF, 1, fp);
 			registers[i].addr = __bswap_16(registers[i].addr);
 			registers[i].val = __bswap_16(registers[i].val);
 		}
-	}
-	//Print Boot table headers
-	UNDERLINE;
-	printf("Boot Table TMS320c55x\n");
-	UNDERLINE;
-	printf("entry point: 0x%06x\n", btable.entry_point);
-	UNDERLINE;
-	printf("register count: %u\n", btable.register_count);
-	UNDERLINE;
-	for(i=0; i<btable.register_count; i++) {
-		printf("register address: 0x%x, value: 0x%x\n", registers[i].addr, registers[i].val);
-		UNDERLINE;
 	}
 	//Looking for sections
 	struct section *psec;
@@ -154,18 +203,11 @@ int main(int argc, char *argv[]) {
 		else
 			sections = psec;
 
-		if ((ftell(fp)+psec->size)%2 != 0)
-			fseek(fp, psec->size+1, SEEK_CUR);
-		else
-			fseek(fp, psec->size, SEEK_CUR);
+		fseek(fp, psec->size+((ftell(fp)+psec->size)%2 != 0? 1:0), SEEK_CUR);
 	}
-	psec = sections;
-	//Finding section name then print
-	while(psec != NULL) {
-		sname_finder(psec);
-		printf("section [%s] \taddress: (0x%06x)[0x%06x - 0x%06x], size: 0x%x \t(%s)\n", psec->name, psec->offset, psec->paddr, psec->paddr+psec->size-1, psec->size, mem_map(psec->paddr));
-		psec = psec->next;
-	}
+	//Finding section name
+	sname_finder();
+	show_info();
 	fclose(fp);
 	exit(0);
 }
